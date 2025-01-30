@@ -1,0 +1,39 @@
+#!/usr/bin/python3
+import sys
+import logging
+import requests
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_list_orgs
+def rep_list_orgs():
+
+    try:
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/organization/list"
+
+        response = requests.get(url)
+
+        if response.status_code == 200:
+            organizations = response.json().get("organizations", [])
+            if not organizations:
+                print("No organizations found.")
+            else:
+                print("List of Organizations:")
+                for org in organizations:
+                    print(f"- {org['id']}: {org['org_name']}")
+        else:
+            print(f"Failed to list organizations: {response.status_code} {response.text}")
+    except Exception as e:
+        print(f"An error occurred while listing organizations: {str(e)}")
+        sys.exit(-1)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 1:
+        print(f'Usage: rep_list_orgs')
+        sys.exit(1)
+
+    rep_list_orgs()
+    sys.exit(0)

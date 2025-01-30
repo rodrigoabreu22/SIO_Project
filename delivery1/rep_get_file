@@ -1,0 +1,48 @@
+#!/usr/bin/python3
+import sys
+import os
+import requests
+import json
+import logging
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_get_file <file handle> [file]
+def rep_get_file(file_handle, file=None):
+
+    data = {
+        "file_handle" : file_handle
+    }
+    try:
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/file"
+
+        response = requests.get(url, stream=True, json=data)
+
+        if response.status_code == 200:
+            if file: #optional argument
+                with open(file, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                print(f"File successfully downloaded to {file}")
+            else:
+                for chunk in response.iter_content(chunk_size=8192):
+                    sys.stdout.buffer.write(chunk)
+        else:
+            print(f"Failed to download file: {response.status_code} {response.text}")
+    except Exception as e:
+        print(f"An error occurred while fetching the file: {str(e)}")
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print(f'Usage: rep_get_file <file handle> [file]')
+        sys.exit(1)
+
+    file_handle = sys.argv[1]
+
+    file = sys.argv[2] if len(sys.argv) > 2 else None
+
+    rep_get_file(file_handle, file)
+    sys.exit(0)

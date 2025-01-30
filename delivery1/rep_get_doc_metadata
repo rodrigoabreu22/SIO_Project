@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+import sys
+import requests
+import json
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+from decrypt_command import decrypt_data, string_bytes
+import os
+
+#rep_get_doc_metadata <session file> <document name>
+def rep_get_doc_metadata(session_file, document_name):
+    try:
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file '{session_file}' does not exist.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in the file '{session_file}': {e}")
+    
+    request = {
+        "org_id": session_data['org_id'],
+        "sub_id": session_data['sub_id'],
+        "document": document_name,
+        "nonce": os.urandom(16).hex(), 
+        "seq_num": session_data["seq_num"]
+    }
+
+    #encrypt the data
+    rep_pubkey = load_rep_pubkey()
+    encrypted_data = encrypt_data(json.dumps(request), rep_pubkey)
+    data_str = bytes_to_string(encrypted_data)
+
+    if os.path.exists(session_file):
+        with open(session_file, 'w') as f:
+            session_data["seq_num"] += 1
+            json.dump(session_data, f)
+
+    response = requests.get("http://localhost:5000/metadata", json=data_str)
+
+    if response.status_code == 200:
+        
+        #decrypt the response
+        data_bytes = string_bytes(response.json())
+        priv_key = session_data["priv_key"].replace("\\n", "\n")
+        data_decrypted = decrypt_data(data_bytes, priv_key)
+
+        data = json.loads(data_decrypted)
+
+        file_handle = data["file_handle"]
+        alg = data["alg"]
+        key = data["key"]
+        create_date = data["create_date"]
+        creator_id = data["creator_id"]
+        deleter_id = data["deleter_id"]
+    
+        return file_handle, alg, key, create_date, creator_id, deleter_id
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print(f'Usage: rep_get_doc_metadata <session file> <document name>')
+        sys.exit(1)
+
+    session_file = sys.argv[1]
+    document_name = sys.argv[2]
+
+    file_handle, alg, key, create_date, creator_id, deleter_id = rep_get_doc_metadata(session_file, document_name)
+
+    print(f"File handle: {file_handle}")
+    print(f"Algorithm: {alg}")
+    print(f"Key: {key}")
+    print(f"Create date: {create_date}")
+    print(f"Creator ID: {creator_id}")
+    print(f"Deleter ID: {deleter_id}")
+
+    with open('metadata/' + document_name + '_metadata', 'w') as f:
+        json.dump({"file_handle": file_handle, "alg": alg, "key": key}, f)
+
+    sys.exit(0)

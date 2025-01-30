@@ -1,0 +1,59 @@
+#!/usr/bin/python3
+import sys
+import logging
+import requests
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_create_org <organization> <username> <name> <email> <public key file>
+def rep_create_org(organization, username, name, email, pubkey_file):
+    try:
+        public_key = load_public_key(pubkey_file)
+
+        data = {
+            "organization": organization,
+            "username": username,
+            "name": name,
+            "email": email,
+            "public_key": public_key
+        }
+
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/organization"
+
+        response = requests.post(url, json=data)
+
+        if response.status_code == 201:
+            logger.info("Organization created successfully.")
+            print("Organization created successfully.")
+        else:
+            logger.error(f"Failed to create organization: {response.status_code} {response.text}")
+            print(f"Failed to create organization: {response.status_code} {response.text}")
+    except FileNotFoundError:
+        logger.error(f"Public key file not found: {pubkey_file}")
+        print(f"Public key file not found: {pubkey_file}")
+        sys.exit(-1)
+    except Exception as e:
+        logger.error(f"An error occurred while creating the organization: {str(e)}")
+        print(f"An error occurred while creating the organization: {str(e)}")
+        sys.exit(-1)
+
+def load_public_key(pubkey_file):
+    with open(pubkey_file, 'rb') as f:
+        public_key = f.read()
+    return public_key
+
+if __name__ == '__main__':
+    if len(sys.argv) != 6:
+        print(f'Usage: rep_create_org <organization> <username> <name> <email> <public key file>')
+        sys.exit(1)
+
+    organization = sys.argv[1]
+    username = sys.argv[2]
+    name = sys.argv[3]
+    email = sys.argv[4]
+    public_key_file = sys.argv[5]
+
+    rep_create_org(organization, username, name, email, public_key_file)

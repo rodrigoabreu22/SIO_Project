@@ -1,0 +1,161 @@
+#!/usr/bin/python3
+
+import sys
+import os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import requests
+import json
+import logging
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+from decrypt_command import decrypt_data, string_bytes
+from signing import sign_data_coms, verify_signature_coms_unpack
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_get_doc_file <session file> <document name> [file]
+def rep_get_doc_file(session_file, doc_name, file=None):
+    try:
+        # Load the session file
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+    except FileNotFoundError:
+        logger.error(f"The session file '{session_file}' does not exist.")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in the session file '{session_file}': {e}")
+        sys.exit(1)
+
+    # Prepare the request payload
+    data = {
+        "org_id": session_data["org_id"],
+        "subject_id": session_data["sub_id"],
+        "doc_name": doc_name,
+        "nonce": os.urandom(16).hex(), 
+        "seq_num": session_data["seq_num"],
+        "signature": session_data["signature"]
+    }
+
+    #encrypt the data
+    rep_pubkey = load_rep_pubkey()
+    encrypted_data = encrypt_data(json.dumps(data), rep_pubkey)
+    data_str = bytes_to_string(encrypted_data)
+
+    priv_key = session_data["priv_key"].replace("\\n", "\n")
+    encrypt_sign_data = sign_data_coms(data_str, priv_key)
+
+    if os.path.exists(session_file):
+        with open(session_file, 'w') as f:
+            session_data["seq_num"] += 1
+            json.dump(session_data, f)
+
+    # Send the GET request to retrieve the file
+    try:
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/document/file"
+        response = requests.get(url, json=encrypt_sign_data)
+
+        verify_response = verify_signature_coms_unpack(response.json(), rep_pubkey)
+
+        if response.status_code == 200:
+
+            #decrypt the response
+            data_bytes = string_bytes(verify_response)
+            priv_key = session_data["priv_key"].replace("\\n", "\n")
+            data_decrypted = decrypt_data(data_bytes, priv_key)
+
+            data = json.loads(data_decrypted)
+
+            logger.info(f"Successfully retrieved document '{doc_name}'.")
+            
+            file_handle = data["file_handle"]
+            alg = data["alg"]
+            key = data["key"]
+            ciphertext = data["content"]
+
+            alg_parts = alg.split(";")
+            key = bytes.fromhex(key)
+            file_handle = bytes.fromhex(file_handle)
+#   
+            ## Verify integrity using the file handle
+            text = bytes.fromhex(ciphertext)
+            received_file_digest = hash_content(text)
+
+            if received_file_digest != file_handle:
+                raise ValueError("File integrity verification failed! The file handle does not match.")
+#   
+            if len(alg_parts) != 3:
+                raise ValueError("Invalid encryption algorithm format. Expected format: 'algorithm;iv;salt'.")
+
+            algorithm = alg_parts[0]
+            iv = bytes.fromhex(alg_parts[1])
+            salt = bytes.fromhex(alg_parts[2])
+
+            # Derive the decryption key using PBKDF2
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=100000,
+                backend=default_backend()
+            )
+
+            derived_key = kdf.derive(key)
+
+            # Initialize the cipher based on the algorithm
+            if algorithm != "AES-CBC":
+                raise ValueError(f"Unsupported algorithm: {algorithm}")
+
+            cipher = Cipher(algorithms.AES(derived_key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+
+            # Decrypt the ciphertext
+            padded_plaintext = decryptor.update(text) + decryptor.finalize()
+
+            # Remove padding
+            padding_length = padded_plaintext[-1]
+            plaintext = padded_plaintext[:-padding_length]
+
+            # Output the decrypted content
+            if file:
+                with open(file, "wb") as f:
+                    f.write(plaintext)
+                logger.info(f"Decrypted content saved to '{file}'.")
+            else:
+                print(plaintext.decode('utf-8'))
+
+        else:
+            logger.error(f"Failed to retrieve document '{doc_name}': {response.status_code} {verify_response}")
+            sys.exit(1)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"An error occurred while requesting the document: {str(e)}")
+        sys.exit(1)
+
+def hash_content(content):
+    """
+    Hashes the content using SHA-256 to generate a file handle.
+    
+    :param content: The content to hash (bytes)
+    :return: The SHA-256 hash (bytes)
+    """
+    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+    digest.update(content)
+    return digest.finalize()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
+        print(f"Usage: {sys.argv[0]} <session file> <document name> [file]")
+        sys.exit(1)
+
+    session_file = sys.argv[1]
+    doc_name = sys.argv[2]
+    file = sys.argv[3] if len(sys.argv) == 4 else None
+
+    # Call the function
+    rep_get_doc_file(session_file, doc_name, file)
+    sys.exit(0)

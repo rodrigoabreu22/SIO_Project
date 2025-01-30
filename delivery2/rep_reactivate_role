@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+import sys
+import os
+import requests
+import json
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+from decrypt_command import decrypt_data, string_bytes
+from signing import sign_data_coms, verify_signature_coms_unpack
+
+#rep_reactivate_role <session file> <role>
+def rep_reactivate_role(session_file, role):
+
+    try:
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file '{session_file}' does not exist.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in the file '{session_file}': {e}")
+    
+    try:
+
+        # Prepare the payload for the API request
+        data = {
+            "org_id": session_data["org_id"],
+            "sub_id": session_data["sub_id"],  
+            "role": role,
+            "nonce": os.urandom(16).hex(), 
+            "seq_num": session_data["seq_num"],
+            "signature": session_data["signature"]
+        }
+
+        #encrypt the data
+        rep_pubkey = load_rep_pubkey()
+        encrypted_data = encrypt_data(json.dumps(data), rep_pubkey)
+        data_str = bytes_to_string(encrypted_data)
+
+        priv_key = session_data["priv_key"].replace("\\n", "\n")
+        encrypt_sign_data = sign_data_coms(data_str, priv_key)
+
+        if os.path.exists(session_file):
+            with open(session_file, 'w') as f:
+                session_data["seq_num"] += 1
+                json.dump(session_data, f)
+
+        # Send the data to the server
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/role/reactivate"
+        response = requests.put(url, json=encrypt_sign_data)
+
+        verify_response = verify_signature_coms_unpack(response.json(), rep_pubkey)
+
+        # Check the response
+        if response.status_code == 201:
+
+            #decrypt the response
+            data_bytes = string_bytes(verify_response)
+            priv_key = session_data["priv_key"].replace("\\n", "\n")
+            data_decrypted = decrypt_data(data_bytes, priv_key)
+
+            data = json.loads(data_decrypted)
+            
+            print(data["message"])
+        else:
+            print(f"Failed to reactivate role: {response.status_code} {verify_response}")
+
+    except FileNotFoundError:
+        print("Session file not found.")
+    except Exception as e:
+        print(f"An error occurred while reactivating the role: {str(e)}")
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print(f'Usage: rep_reactivate_role <session file> <role>')
+        sys.exit(1)
+
+    session_file = sys.argv[1]
+    role = sys.argv[2]
+
+    rep_reactivate_role(session_file, role)
+    sys.exit(0)

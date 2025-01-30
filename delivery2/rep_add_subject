@@ -1,0 +1,120 @@
+#!/usr/bin/python3
+import sys
+import requests
+import json
+import logging
+import document_acl
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+from decrypt_command import decrypt_data, string_bytes
+import os
+from signing import sign_data_coms, verify_signature_coms_unpack
+import org_acl
+import role_acl
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_add_subject <session file> <username> <name> <email> <credentials file>
+def rep_add_subject(session_file, username, name, email, credentials_file):
+
+    public_key = load_public_key(credentials_file)
+
+    try:
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file '{session_file}' does not exist.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in the file '{session_file}': {e}")
+
+    try:
+        if is_permission(username):
+            print(f"Invalid username: {username}")
+            return
+        
+        public_key = load_public_key(credentials_file)
+
+        data = {
+            "org_id": session_data["org_id"],
+            "sub_id": session_data["sub_id"],
+            "username": username,
+            "name": name,
+            "email": email,
+            "public_key": public_key.decode('utf-8'),
+            "nonce": os.urandom(16).hex(), 
+            "seq_num": session_data["seq_num"],
+            "signature": session_data["signature"]
+        }
+
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/subject"
+        
+        #encrypt the data
+        rep_pubkey = load_rep_pubkey()
+        encrypted_data = encrypt_data(json.dumps(data), rep_pubkey)
+        data_str = bytes_to_string(encrypted_data)
+
+        priv_key = session_data["priv_key"].replace("\\n", "\n")
+        encrypt_sign_data = sign_data_coms(data_str, priv_key)
+
+        if os.path.exists(session_file):
+            with open(session_file, 'w') as f:
+                session_data["seq_num"] += 1
+                json.dump(session_data, f)
+
+        response = requests.post(url, json=encrypt_sign_data)
+
+        verify_response = verify_signature_coms_unpack(response.json(), rep_pubkey)
+
+        if response.status_code == 201:
+
+            #decrypt the response
+            data_bytes = string_bytes(verify_response)
+            priv_key = session_data["priv_key"].replace("\\n", "\n")
+            data_decrypted = decrypt_data(data_bytes, priv_key)
+
+            data = json.loads(data_decrypted)
+
+            logger.info("Subject created successfully.")
+            print("Subject created successfully.")
+        else:
+            logger.error(f"Failed to create subject: {response.status_code} {verify_response}")
+            print(f"Failed to create subject: {response.status_code} {verify_response}")
+    except FileNotFoundError:
+        logger.error("Credentials file or session file not found.")
+        print("Credentials file or session file not found.")
+        sys.exit(-1)
+    except Exception as e:
+        logger.error(f"An error occurred while creating the subject: {str(e)}")
+        print(f"An error occurred while creating the subject: {str(e)}")
+        sys.exit(-1)
+
+def load_public_key(pubkey_file):
+    with open(pubkey_file, 'rb') as f:
+        public_key = f.read()
+    return public_key
+
+def is_permission(arg):
+    permissions = list(org_acl.org_acl)
+    permissions.extend(list(role_acl.role_acl))
+    permissions.extend(list(document_acl.document_acl))
+
+    for perm in permissions:
+        if arg == perm.name:
+            return True
+    return False
+
+if __name__ == '__main__':
+    if len(sys.argv) != 6:
+        print(f'Usage: rep_add_subject <session file> <username> <name> <email> <credentials file>')
+        sys.exit(1)
+
+    session_file = sys.argv[1]
+    username = sys.argv[2]
+    name = sys.argv[3]
+    email = sys.argv[4]
+    credentials_file = sys.argv[5]
+
+    rep_add_subject(session_file, username, name, email, credentials_file)
+    sys.exit(0)

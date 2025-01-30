@@ -1,0 +1,103 @@
+#!/usr/bin/python3
+import sys
+import requests
+import json
+import logging
+import argparse
+import datetime
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+from decrypt_command import decrypt_data, string_bytes
+import os
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_list_docs <session file> [-s username] [-d nt/ot/et date]
+def rep_list_docs(session_file, username=None, date=None, date_filter=None):
+
+    try:
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file '{session_file}' does not exist.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in the file '{session_file}': {e}")
+
+    try:
+
+        data = {
+            "subject_id" : session_data["sub_id"],
+            "org_id" : session_data["org_id"],
+            "username" : username,
+            "date" : date,
+            "date_filter" : date_filter,
+            "nonce": os.urandom(16).hex(), 
+            "seq_num": session_data["seq_num"]
+        }
+
+        #encrypt the data
+        rep_pubkey = load_rep_pubkey()
+        encrypted_data = encrypt_data(json.dumps(data), rep_pubkey)
+        data_str = bytes_to_string(encrypted_data)
+
+        if os.path.exists(session_file):
+            with open(session_file, 'w') as f:
+                session_data["seq_num"] += 1
+                json.dump(session_data, f)
+
+        response = requests.get("http://localhost:5000/document", json=data_str)
+
+        if response.status_code == 200:
+            #decrypt the response
+            data_bytes = string_bytes(response.json())
+            priv_key = session_data["priv_key"].replace("\\n", "\n")
+            data_decrypted = decrypt_data(data_bytes, priv_key)
+
+            data = json.loads(data_decrypted)
+
+            logger.info("Document list retrieved successfully.")
+            print(json.dumps(data, indent=4)) 
+        else:
+            logger.error(f"Failed to list documents: {response.status_code} {response.text}")
+            print(f"Failed to list documents: {response.status_code} {response.text}")
+    except FileNotFoundError:
+        logger.error("Session file not found.")
+        print("Session file not found.")
+        sys.exit(-1)
+    except Exception as e:
+        logger.error(f"An error occurred while retrieving the documents: {str(e)}")
+        print(f"An error occurred while retrieving the documents: {str(e)}")
+        sys.exit(-1)
+
+    return None
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="List documents of an organization based on filters.")
+    parser.add_argument("session_file", help="Path to the session file (JSON).")
+    parser.add_argument("-s", "--username", help="Username to filter by.", default=None)
+    parser.add_argument("-d", nargs=2, metavar=("date_filter", "date"), 
+                        help="Date filter and date in the format 'nt/ot/et DD-MM-YYYY'.", default=None)
+
+    args = parser.parse_args()
+
+    date_filter = None
+    date = None
+    if args.d:
+        date_filter = args.d[0]
+        date = args.d[1]
+
+        if date_filter not in ["nt", "ot", "et"]:
+            print("Error: Date filter must be one of 'nt', 'ot', or 'et'.")
+            sys.exit(1)
+
+        try:
+            datetime.datetime.strptime(date, "%d-%m-%Y") 
+        except ValueError:
+            print("Error: Date must be in DD-MM-YYYY format.")
+            sys.exit(1)
+
+    rep_list_docs(args.session_file, username=args.username, date=date, date_filter=date_filter)
+
+    sys.exit(0)

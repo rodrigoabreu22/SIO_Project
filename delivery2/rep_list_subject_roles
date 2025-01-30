@@ -1,0 +1,79 @@
+#!/usr/bin/python3
+import sys
+import os
+import json
+import requests
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+from decrypt_command import decrypt_data, string_bytes
+from signing import verify_signature_coms_unpack, sign_data_coms
+
+# rep_list_subject_roles <session file> <username>
+def rep_list_subject_roles(session_file, username):
+    try:
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The file '{session_file}' does not exist.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in the file '{session_file}': {e}")
+
+    try:
+        # Prepare the payload for the API request
+        data = {
+            "org_id": session_data["org_id"],
+            "sub_id": session_data["sub_id"],
+            "username": username,
+            "nonce": os.urandom(16).hex(),
+            "seq_num": session_data["seq_num"],
+            "signature": session_data["signature"]
+        }
+
+        # Encrypt the payload
+        rep_pubkey = load_rep_pubkey()
+        encrypted_data = encrypt_data(json.dumps(data), rep_pubkey)
+        data_str = bytes_to_string(encrypted_data)
+        
+        priv_key = session_data["priv_key"].replace("\\n", "\n")
+        encrypt_sign_data = sign_data_coms(data_str, priv_key)
+
+        if os.path.exists(session_file):
+            with open(session_file, 'w') as f:
+                session_data["seq_num"] += 1
+                json.dump(session_data, f)
+
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/subject/roles"
+        response = requests.get(url, json=encrypt_sign_data)
+        
+        verify_response = verify_signature_coms_unpack(response.json(), rep_pubkey)
+
+        if response.status_code == 200:
+            data_bytes = string_bytes(verify_response)
+            priv_key = session_data["priv_key"].replace("\\n", "\n")
+            decrypted_data = decrypt_data(data_bytes, priv_key)
+
+            # Parse and display roles
+            data = json.loads(decrypted_data)
+            roles = data["message"]
+            print(f"Roles for subject '{username}':")
+            for role in roles:
+                print(f"- {role}")
+        else:
+            print(f"Failed to list roles for subject: {response.status_code} {verify_response}")
+
+    except FileNotFoundError:
+        print("Session file not found.")
+    except Exception as e:
+        print(f"An error occurred while listing roles for the subject: {str(e)}")
+        sys.exit(-1)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print(f'Usage: rep_list_subject_roles <session file> <username>')
+        sys.exit(1)
+
+    session_file = sys.argv[1]
+    username = sys.argv[2]
+
+    rep_list_subject_roles(session_file, username)
+    sys.exit(0)

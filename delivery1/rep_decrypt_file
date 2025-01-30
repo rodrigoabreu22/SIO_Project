@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+
+import sys
+import os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import json
+
+
+def rep_decrypt_file(encrypted_file, encryption_metadata_path):
+    """
+    Decrypts the content of an encrypted file using the provided metadata and prints it to stdout.
+    
+    :param encrypted_file_path: Path to the encrypted file
+    :param encryption_metadata: Metadata containing algorithm, key, IV, and salt
+    """
+
+
+    if os.path.exists(encrypted_file):
+        try:
+            with open(encrypted_file, 'r') as f:
+                ciphertext = f.read()         
+        except FileNotFoundError:
+            raise FileNotFoundError(f"The file '{encryption_metadata_path}' does not exist.")
+        
+    else:
+        ciphertext = encrypted_file
+
+    try:
+        with open(encryption_metadata_path, 'r') as f:
+            encryption_metadata = json.load(f)
+    except FileNotFoundError:
+            raise FileNotFoundError(f"The file '{encryption_metadata_path}' does not exist.")
+    except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON format in the file '{encryption_metadata_path}': {e}")
+    
+    try:
+
+        # Parse encryption metadata
+        alg_parts = encryption_metadata["alg"].split(";")
+        key = bytes.fromhex(encryption_metadata["key"])
+        file_handle = bytes.fromhex(encryption_metadata["file_handle"])
+#
+        ## Verify integrity using the file handle
+        text = bytes.fromhex(ciphertext)
+        received_file_digest = hash_content(text)
+        
+        if received_file_digest != file_handle:
+            raise ValueError("File integrity verification failed! The file handle does not match.")
+#
+        if len(alg_parts) != 3:
+            raise ValueError("Invalid encryption algorithm format. Expected format: 'algorithm;iv;salt'.")
+
+        algorithm = alg_parts[0]
+        iv = bytes.fromhex(alg_parts[1])
+        salt = bytes.fromhex(alg_parts[2])
+
+        # Derive the decryption key using PBKDF2
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+            backend=default_backend()
+        )
+
+        derived_key = kdf.derive(key)
+
+        # Initialize the cipher based on the algorithm
+        if algorithm != "AES-CBC":
+            raise ValueError(f"Unsupported algorithm: {algorithm}")
+
+        cipher = Cipher(algorithms.AES(derived_key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+
+        # Decrypt the ciphertext
+        padded_plaintext = decryptor.update(text) + decryptor.finalize()
+
+        # Remove padding
+        padding_length = padded_plaintext[-1]
+        plaintext = padded_plaintext[:-padding_length]
+
+        # Output the decrypted content to stdout
+        print("Decrypted Content:")
+        print(plaintext.decode("utf-8"))
+
+    except Exception as e:
+        print(f"An error occurred during decryption: {e}")
+        raise
+
+def hash_content(content):
+    """
+    Hashes the content using SHA-256 to generate a file handle.
+    
+    :param content: The content to hash (bytes)
+    :return: The SHA-256 hash (bytes)
+    """
+    digest = hashes.Hash(hashes.SHA256(), backend=default_backend())
+    digest.update(content)
+    return digest.finalize()
+
+
+# Example Usage
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python3 rep_decrypt_file.py <encrypted_file> <encryption_metadata>")
+        sys.exit(1)
+
+    encrypted_file = sys.argv[1]
+    ecncryption_metadata = sys.argv[2]
+
+    rep_decrypt_file(encrypted_file, ecncryption_metadata)

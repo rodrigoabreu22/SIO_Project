@@ -1,0 +1,90 @@
+#!/usr/bin/python3
+import sys
+import logging
+import requests
+from encrypt_command import encrypt_data, bytes_to_string, load_rep_pubkey
+import json
+from cryptography.hazmat.primitives import serialization
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+
+logging.basicConfig(format='%(levelname)s\t- %(message)s')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+#rep_create_org <organization> <username> <name> <email> <public key file>
+def rep_create_org(organization, username, name, email, pubkey_file):
+    try:
+        public_key = load_public_key(pubkey_file)
+
+        data = {
+            "organization": organization,
+            "username": username,
+            "name": name,
+            "email": email,
+            "public_key": public_key.decode()
+        }
+
+        #encrypt the data
+        rep_pubkey = load_rep_pubkey()
+        encrypted_data = encrypt_data(json.dumps(data), rep_pubkey)
+        data_str = bytes_to_string(encrypted_data)
+
+        base_address = "http://localhost:5000"
+        url = f"{base_address}/organization"
+
+        response = requests.post(url, json=data_str)
+        data = response.json()
+        signature = data["signature"]
+        message = data["response"]
+
+        pub_key = load_rep_pubkey()
+        public_key = serialization.load_pem_public_key(pub_key.encode())
+
+        try:
+            public_key.verify(
+                bytes.fromhex(signature),
+                json.dumps(message).encode(),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+        except InvalidSignature as e:
+            print(f"Error: Invalid signature: {e}")
+            sys.exit(-1)
+
+        if response.status_code == 201:
+            logger.info(message)
+            print(message)
+        else:
+            logger.error(f"Failed to create organization: {response.status_code} {message}")
+            print(f"Failed to create organization: {response.status_code} {message}")
+    except FileNotFoundError:
+        logger.error(f"Public key file not found: {pubkey_file}")
+        print(f"Public key file not found: {pubkey_file}")
+        sys.exit(-1)
+    except Exception as e:
+        logger.error(f"An error occurred while creating the organization: {str(e)}")
+        print(f"An error occurred while creating the organization: {str(e)}")
+        sys.exit(-1)
+
+def load_public_key(pubkey_file):
+    with open(pubkey_file, 'rb') as f:
+        public_key = f.read()
+    return public_key
+
+if __name__ == '__main__':
+    if len(sys.argv) != 6:
+        print(f'Usage: rep_create_org <organization> <username> <name> <email> <public key file>')
+        sys.exit(1)
+
+    organization = sys.argv[1]
+    username = sys.argv[2]
+    name = sys.argv[3]
+    email = sys.argv[4]
+    public_key_file = sys.argv[5]
+
+    rep_create_org(organization, username, name, email, public_key_file)
