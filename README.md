@@ -7,6 +7,8 @@
 - Delivery 2: 2.97 (0-3)
 - Delivery 3: 3.01 (0-4)
 
+Total: 8.98 * 2 = 17.96
+
 # Group members
 - Rodrigo Abreu, 113626
 - Eduardo Lopes, 103070
