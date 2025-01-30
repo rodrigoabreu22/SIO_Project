@@ -2,6 +2,11 @@
 [![Open in Visual Studio Code](https://classroom.github.com/assets/open-in-vscode-2e0aaae1b6195c2367325f4f02e2d04e9abb55f0b24a779b69b11b9e10269abc.svg)](https://classroom.github.com/online_ide?assignment_repo_id=16841019&assignment_repo_type=AssignmentRepo)
 # sio_2425_project
 
+### Grades
+- Delivery 1: 3 (0-3)
+- Delivery 2: 2.97 (0-3)
+- Delivery 3: 3.01 (0-4)
+
 # Group members
 - Rodrigo Abreu, 113626
 - Eduardo Lopes, 103070
